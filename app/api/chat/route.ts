@@ -2,35 +2,39 @@ import {
   consumeStream,
   convertToModelMessages,
   streamText,
+  stepCountIs,
   UIMessage,
   tool,
 } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
-import { createAnthropic } from '@ai-sdk/anthropic'
 import { z } from 'zod'
 
 export const maxDuration = 30
 
-// Create provider instances based on available API keys
+// Resolve the chat model based on available credentials.
+// - If an OpenRouter key (sk-or-...) is present, use OpenRouter via the
+//   OpenAI-compatible chat-completions endpoint.
+// - If a standard OpenAI key is present, use OpenAI directly.
+// - Otherwise fall back to the Vercel AI Gateway (requires a verified card).
 function getModel() {
-  // Check for OpenAI key first
-  if (process.env.OPENAI_API_KEY) {
-    const openai = createOpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+  const key = process.env.OPENAI_API_KEY
+
+  if (key && key.startsWith('sk-or-')) {
+    const openrouter = createOpenAI({
+      apiKey: key,
+      baseURL: 'https://openrouter.ai/api/v1',
     })
+    // Use the chat-completions endpoint (OpenRouter compatible)
+    return openrouter.chat('openai/gpt-4o')
+  }
+
+  if (key) {
+    const openai = createOpenAI({ apiKey: key })
     return openai('gpt-4o')
   }
-  
-  // Check for Anthropic key
-  if (process.env.ANTHROPIC_API_KEY) {
-    const anthropic = createAnthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    })
-    return anthropic('claude-sonnet-4-20250514')
-  }
-  
-  // Fallback to AI Gateway (requires Vercel credit card verification)
-  return 'anthropic/claude-sonnet-4-20250514'
+
+  // Vercel AI Gateway (zero-config model string)
+  return 'openai/gpt-5'
 }
 
 // Define tools for business operations
@@ -215,7 +219,9 @@ Guidelines:
     system: systemPrompt,
     messages: await convertToModelMessages(messages),
     tools: operationsTools,
-    maxSteps: 5,
+    stopWhen: stepCountIs(5),
+    // Keep within limited OpenRouter free-tier credits
+    maxOutputTokens: 1500,
     abortSignal: req.signal,
   })
 
